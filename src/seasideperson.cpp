@@ -69,10 +69,11 @@ SeasidePerson *SeasidePersonAttached::selfPerson() const
 {
     if (SeasideCache::CacheItem *item = SeasideCache::itemById(SeasideCache::selfContactId())) {
         if (!item->itemData) {
-            item->itemData = new SeasidePerson(&item->contact, (item->contactState == SeasideCache::ContactComplete), SeasideCache::instance());
+            QContact *selfContact(item->instantiateContact());
+            item->itemData.reset(new SeasidePerson(selfContact, (item->contactState == SeasideCache::ContactComplete), SeasideCache::instance()));
         }
 
-        return static_cast<SeasidePerson *>(item->itemData);
+        return static_cast<SeasidePerson *>(item->itemData.data());
     }
 
     return 0;
@@ -2179,28 +2180,37 @@ QVariantList SeasidePerson::removeDuplicateEmailAddresses(const QVariantList &em
     return rv;
 }
 
-void SeasidePerson::updateContact(const QContact &newContact, QContact *oldContact, SeasideCache::ContactState state)
+void SeasidePerson::updateCacheContact(SeasideCache::CacheItem *item, const QContact &contact)
 {
-    Q_UNUSED(oldContact)
-    Q_ASSERT(oldContact == mContact);
+    Q_ASSERT(item == mItem);
 
-    setContact(newContact);
-    setComplete(state == SeasideCache::ContactComplete);
+    setContact(contact);
+    mItem->setContact(contact);
+    setComplete(mItem->contactState == SeasideCache::ContactComplete);
 }
 
 void SeasidePerson::addressResolved(const QString &, const QString &, SeasideCache::CacheItem *item)
 {
     if (item) {
-        if (&item->contact != mContact) {
+        // Ensure this item contains a QContact object
+        QContact *itemContact(item->instantiateContact());
+
+        if (itemContact != mContact) {
             QContact *oldContact = mContact;
 
             // Attach to the contact in the cache item
-            mContact = &item->contact;
+            mContact = itemContact;
             recalculateDisplayLabel();
             updateContactDetails(*oldContact);
 
             // Release our previous contact info
-            delete oldContact;
+            if (mAttachState == Listening) {
+                // TODO: the previous item could have its QContact uninstantiated here, if this was the only listener
+                mItem->removeListener(this);
+                mItem = 0;
+            } else if (mAttachState == Unattached) {
+                delete oldContact;
+            }
 
             // We need to be informed of any changes to this contact in the cache
             item->appendListener(this, this);
@@ -2223,7 +2233,7 @@ void SeasidePerson::itemUpdated(SeasideCache::CacheItem *)
 
 void SeasidePerson::itemAboutToBeRemoved(SeasideCache::CacheItem *item)
 {
-    if (&item->contact == mContact) {
+    if (item->apiId() == mContact->id()) {
         // Our contact is being destroyed - copy the address details to an internal contact
         mContact = new QContact;
         if (mAttachState == Listening) {
@@ -2233,18 +2243,20 @@ void SeasidePerson::itemAboutToBeRemoved(SeasideCache::CacheItem *item)
         }
         mAttachState = Unattached;
 
-        foreach (QContactPhoneNumber number, item->contact.details<QContactPhoneNumber>()) {
+        SeasideCache::CacheItem::QContactProxy itemContact(item->getContact());
+
+        foreach (QContactPhoneNumber number, itemContact.details<QContactPhoneNumber>()) {
             mContact->saveDetail(&number);
         }
-        foreach (QContactEmailAddress address, item->contact.details<QContactEmailAddress>()) {
+        foreach (QContactEmailAddress address, itemContact.details<QContactEmailAddress>()) {
             mContact->saveDetail(&address);
         }
-        foreach (QContactOnlineAccount account, item->contact.details<QContactOnlineAccount>()) {
+        foreach (QContactOnlineAccount account, itemContact.details<QContactOnlineAccount>()) {
             mContact->saveDetail(&account);
         }
 
         recalculateDisplayLabel();
-        updateContactDetails(item->contact);
+        updateContactDetails(itemContact);
     }
 }
 

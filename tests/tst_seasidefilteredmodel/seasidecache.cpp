@@ -164,11 +164,11 @@ void SeasideCache::reset()
         contact.saveDetail(&statusFlags);
 
         m_cacheIndices.insert(internalId(contact), m_cache.count());
-        m_cache.append(CacheItem(contact));
+        m_cache.append(new CacheItem(contact));
 
         QString fullName = name.firstName() + QChar::fromLatin1(' ') + name.lastName();
 
-        CacheItem &cacheItem = m_cache.last();
+        CacheItem &cacheItem = *m_cache.last();
         cacheItem.nameGroup = determineNameGroup(&cacheItem);
         cacheItem.displayLabel = fullName;
     }
@@ -186,7 +186,7 @@ QList<quint32> SeasideCache::getContactsForFilterType(FilterType filterType)
         if ((filterType == FilterAll) ||
             (filterType == FilterFavorites && contactsData[i].isFavorite) ||
             (filterType == FilterOnline && contactsData[i].isOnline)) {
-            ids.append(internalId(instancePtr->m_cache[i].contact.id()));
+            ids.append(instancePtr->m_cache[i]->iid);
         }
     }
 
@@ -241,7 +241,7 @@ SeasideCache::CacheItem *SeasideCache::existingItem(const QContactId &id)
 {
     quint32 iid(internalId(id));
     if (instancePtr->m_cacheIndices.contains(iid)) {
-        return &instancePtr->m_cache[instancePtr->m_cacheIndices[iid]];
+        return instancePtr->m_cache[instancePtr->m_cacheIndices[iid]];
     }
     return 0;
 }
@@ -249,7 +249,7 @@ SeasideCache::CacheItem *SeasideCache::existingItem(const QContactId &id)
 SeasideCache::CacheItem *SeasideCache::existingItem(quint32 iid)
 {
     if (instancePtr->m_cacheIndices.contains(iid)) {
-        return &instancePtr->m_cache[instancePtr->m_cacheIndices[iid]];
+        return instancePtr->m_cache[instancePtr->m_cacheIndices[iid]];
     }
     return 0;
 }
@@ -258,7 +258,7 @@ SeasideCache::CacheItem *SeasideCache::itemById(const QContactId &id, bool)
 {
     quint32 iid(internalId(id));
     if (instancePtr->m_cacheIndices.contains(iid)) {
-        return &instancePtr->m_cache[instancePtr->m_cacheIndices[iid]];
+        return instancePtr->m_cache[instancePtr->m_cacheIndices[iid]];
     }
     return 0;
 }
@@ -282,7 +282,7 @@ SeasideCache::CacheItem *SeasideCache::itemById(int id, bool)
 QContact SeasideCache::contactById(const QContactId &id)
 {
     quint32 iid(internalId(id));
-    return instancePtr->m_cache[instancePtr->m_cacheIndices[iid]].contact;
+    return instancePtr->m_cache[instancePtr->m_cacheIndices[iid]]->getContact();
 }
 
 QString SeasideCache::nameGroup(const CacheItem *cacheItem)
@@ -298,7 +298,9 @@ QString SeasideCache::determineNameGroup(const CacheItem *cacheItem)
     if (!cacheItem)
         return QString();
 
-    const QContactName nameDetail = cacheItem->contact.detail<QContactName>();
+    SeasideCache::CacheItem::QContactProxy contact(cacheItem->getContact());
+
+    const QContactName nameDetail = contact.detail<QContactName>();
     const QString sort(sortProperty() == QString::fromLatin1("firstName") ? nameDetail.firstName() : nameDetail.lastName());
 
     QString group;
@@ -499,11 +501,17 @@ QString SeasideCache::exportContacts()
 
 void SeasideCache::setFirstName(FilterType filterType, int index, const QString &firstName)
 {
-    CacheItem &cacheItem = m_cache[m_cacheIndices[m_contacts[filterType].at(index)]];
+    CacheItem &cacheItem = *m_cache[m_cacheIndices[m_contacts[filterType].at(index)]];
 
-    QContactName name = cacheItem.contact.detail<QContactName>();
+    SeasideCache::CacheItem::QContactProxy contact(cacheItem.getContact());
+
+    QContact updatedContact(contact);
+
+    QContactName name = updatedContact.detail<QContactName>();
     name.setFirstName(firstName);
-    cacheItem.contact.saveDetail(&name);
+    updatedContact.saveDetail(&name);
+
+    cacheItem.setContact(updatedContact);
 
     QString fullName = name.firstName() + QChar::fromLatin1(' ') + name.lastName();
     cacheItem.nameGroup = determineNameGroup(&cacheItem);
@@ -521,6 +529,6 @@ void SeasideCache::setFirstName(FilterType filterType, int index, const QString 
 
 quint32 SeasideCache::idAt(int index) const
 {
-    return internalId(m_cache[index].contact.id());
+    return m_cache[index]->iid;
 }
 

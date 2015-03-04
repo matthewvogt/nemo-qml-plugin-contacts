@@ -323,7 +323,7 @@ public:
 
     void displayLabelOrderChanged(SeasideCache::DisplayLabelOrder order);
 
-    void updateContact(const QContact &newContact, QContact *oldContact, SeasideCache::ContactState state);
+    void updateCacheContact(SeasideCache::CacheItem *item, const QContact &newContact);
 
     void addressResolved(const QString &first, const QString &second, SeasideCache::CacheItem *item);
 

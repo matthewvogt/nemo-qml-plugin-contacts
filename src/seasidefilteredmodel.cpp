@@ -281,8 +281,10 @@ struct FilterData : public SeasideCache::ItemListener
         if (filterKey.isEmpty()) {
             QSet<const QString *> matchTokens;
 
+            const SeasideCache::CacheItem::QContactProxy contact(item->getContact());
+
             // split the display label and filter details into words
-            QContactName name = item->contact.detail<QContactName>();
+            QContactName name = contact.detail<QContactName>();
             insert(matchTokens, splitWords(name.firstName()));
             insert(matchTokens, splitWords(name.middleName()));
             insert(matchTokens, splitWords(name.lastName()));
@@ -292,10 +294,10 @@ struct FilterData : public SeasideCache::ItemListener
             // Include the custom label - it may contain the user's customized name for the contact
             insert(matchTokens, splitWords(name.value<QString>(QContactName__FieldCustomLabel)));
 
-            QContactNickname nickname = item->contact.detail<QContactNickname>();
+            QContactNickname nickname = contact.detail<QContactNickname>();
             insert(matchTokens, splitWords(nickname.nickname()));
 
-            foreach (const QContactPhoneNumber &detail, item->contact.details<QContactPhoneNumber>()) {
+            foreach (const QContactPhoneNumber &detail, contact.details<QContactPhoneNumber>()) {
                 // For phone numbers, match on the normalized from (punctuation stripped)
                 // When we can extract a localized version of the number, add that also
                 QString normalized(QtContactsSqliteExtensions::normalizePhoneNumber(detail.number(), normalizeFlags));
@@ -310,15 +312,15 @@ struct FilterData : public SeasideCache::ItemListener
                 }
             }
 
-            foreach (const QContactEmailAddress &detail, item->contact.details<QContactEmailAddress>())
+            foreach (const QContactEmailAddress &detail, contact.details<QContactEmailAddress>())
                 insert(matchTokens, splitWords(stringPreceding(detail.emailAddress(), atSymbol)));
-            foreach (const QContactOrganization &detail, item->contact.details<QContactOrganization>())
+            foreach (const QContactOrganization &detail, contact.details<QContactOrganization>())
                 insert(matchTokens, splitWords(detail.name()));
-            foreach (const QContactOnlineAccount &detail, item->contact.details<QContactOnlineAccount>())
+            foreach (const QContactOnlineAccount &detail, contact.details<QContactOnlineAccount>())
                 insert(matchTokens, splitWords(stringPreceding(detail.accountUri(), atSymbol)));
-            foreach (const QContactGlobalPresence &detail, item->contact.details<QContactGlobalPresence>())
+            foreach (const QContactGlobalPresence &detail, contact.details<QContactGlobalPresence>())
                 insert(matchTokens, splitWords(detail.nickname()));
-            foreach (const QContactPresence &detail, item->contact.details<QContactPresence>())
+            foreach (const QContactPresence &detail, contact.details<QContactPresence>())
                 insert(matchTokens, splitWords(detail.nickname()));
 
             filterKey = matchTokens.toList();
@@ -764,7 +766,7 @@ QVariant SeasideFilteredModel::data(const QModelIndex &index, int role) const
 
 QVariant SeasideFilteredModel::data(SeasideCache::CacheItem *cacheItem, int role) const
 {
-    const QContact &contact = cacheItem->contact;
+    const SeasideCache::CacheItem::QContactProxy &contact = cacheItem->getContact();
 
     if (role == ContactIdRole) {
         return cacheItem->iid;
@@ -830,7 +832,7 @@ QVariant SeasideFilteredModel::data(SeasideCache::CacheItem *cacheItem, int role
         }
         return rv;
     } else if (role == Qt::DisplayRole || role == SectionBucketRole) {
-        if (SeasidePerson *person = static_cast<SeasidePerson *>(cacheItem->itemData)) {
+        if (SeasidePerson *person = static_cast<SeasidePerson *>(cacheItem->itemData.data())) {
             // If we have a person instance, prefer to use that
             return role == Qt::DisplayRole ? person->displayLabel() : person->sectionBucket();
         }
@@ -977,10 +979,11 @@ SeasidePerson *SeasideFilteredModel::personFromItem(SeasideCache::CacheItem *ite
         return 0;
 
     if (!item->itemData) {
-        item->itemData = new SeasidePerson(&item->contact, (item->contactState == SeasideCache::ContactComplete), SeasideCache::instance());
+        QContact *itemContact(item->instantiateContact());
+        item->itemData.reset(new SeasidePerson(itemContact, (item->contactState == SeasideCache::ContactComplete), SeasideCache::instance()));
     }
 
-    return static_cast<SeasidePerson *>(item->itemData);
+    return static_cast<SeasidePerson *>(item->itemData.data());
 }
 
 bool SeasideFilteredModel::isFiltered() const

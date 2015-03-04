@@ -807,7 +807,7 @@ void tst_SeasideFilteredModel::searchByFirstNameCharacter()
     */
 
     SeasideCache::CacheItem *cacheItem = SeasideCache::existingItem(cache.idAt(0));
-    QString origName = cacheItem->contact.detail<QContactName>().firstName();
+    QString origName = cacheItem->getContact().detail<QContactName>().firstName();
     cache.setFirstName(SeasideCache::FilterAll, 0, "123");
     model.setFilterPattern("#");    // non-letters
     QCOMPARE(model.rowCount(), 1);

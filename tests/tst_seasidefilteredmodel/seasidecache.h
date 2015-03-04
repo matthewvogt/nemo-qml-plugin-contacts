@@ -55,19 +55,19 @@ public:
         HasValidOnlineAccount = (QContactStatusFlags::IsOnline << 1)
     };
 
+    struct CacheItem;
     struct ItemData
     {
         virtual ~ItemData() {}
 
         virtual void displayLabelOrderChanged(DisplayLabelOrder order) = 0;
 
-        virtual void updateContact(const QContact &newContact, QContact *oldContact, ContactState state) = 0;
+        virtual void updateCacheContact(SeasideCache::CacheItem *item, const QContact &contact) = 0;
 
         virtual void constituentsFetched(const QList<int> &ids) = 0;
         virtual void mergeCandidatesFetched(const QList<int> &ids) = 0;
     };
 
-    struct CacheItem;
     struct ItemListener
     {
         virtual ~ItemListener() {}
@@ -80,24 +80,119 @@ public:
 
     struct CacheItem
     {
-        CacheItem() : itemData(0), iid(0), statusFlags(0), contactState(ContactAbsent), listeners(0) {}
+        CacheItem()
+            : iid(0), statusFlags(0), contactState(ContactAbsent), listeners(0)
+        {
+        }
+
         CacheItem(const QContact &contact)
-            : contact(contact), itemData(0), iid(internalId(contact)),
-              statusFlags(contact.detail<QContactStatusFlags>().flagsValue()), contactState(ContactComplete), listeners(0) {}
+            : iid(internalId(contact)), statusFlags(contact.detail<QContactStatusFlags>().flagsValue()), contactState(ContactComplete), listeners(0)
+        {
+            QDataStream os(&contactData, QIODevice::WriteOnly);
+            os << contact;
+        }
+
+        QContactId apiId() const { return SeasideCache::apiId(iid); }
 
         ItemListener *listener(void *) { return 0; }
 
         ItemListener *appendListener(ItemListener *listener, void *) { listeners = listener; listener->next = 0; return listener; }
         bool removeListener(ItemListener *) { listeners = 0; return true; }
 
-        QContact contact;
-        ItemData *itemData;
+        class QContactProxy
+        {
+            friend class CacheItem;
+
+            const QContact *contact;
+            bool destroy;
+
+            QContactProxy(const QByteArray &contactData)
+                : contact(new QContact)
+                , destroy(true)
+            {
+                QDataStream is(contactData);
+                is >> const_cast<QContact&>(*contact);
+            }
+
+            QContactProxy(const QContact *contact)
+                : contact(contact)
+                , destroy(false)
+            {
+            }
+
+        public:
+            ~QContactProxy()
+            {
+                if (destroy) {
+                    delete contact;
+                }
+            }
+
+            QContactId id() const { return contact->id(); }
+
+            template<typename DetailType>
+            DetailType detail() const { return contact->detail<DetailType>(); }
+
+            template<typename DetailType>
+            QList<DetailType> details() const { return contact->details<DetailType>(); }
+
+            QList<QContactDetail> details() const { return contact->details(); }
+
+            operator const QContact& () const { return *contact; }
+        };
+
+        const QContactProxy getContact() const
+        {
+            if (instantiatedContact) {
+                return QContactProxy(instantiatedContact.data());
+            }
+            return QContactProxy(contactData);
+        }
+
+        void setContact(const QContact &contact)
+        {
+            if (instantiatedContact) {
+                *instantiatedContact = contact;
+            } else {
+                QDataStream os(&contactData, QIODevice::WriteOnly);
+                os << contact;
+            }
+        }
+
+        QContact *instantiateContact()
+        {
+            // Ensure that this cacheitem contains an instantiated QContact
+            if (!instantiatedContact) {
+                instantiatedContact.reset(new QContact);
+
+                QDataStream is(contactData);
+                is >> const_cast<QContact&>(*instantiatedContact);
+
+                contactData.clear();
+            }
+            return instantiatedContact.data();
+        }
+
+        void uninstantiateContact()
+        {
+            if (instantiatedContact) {
+                // Release this instantiation
+                QDataStream os(&contactData, QIODevice::WriteOnly);
+                os << *instantiatedContact;
+
+                instantiatedContact.reset();
+            }
+        }
+
         quint32 iid;
         quint64 statusFlags;
         ContactState contactState;
         ItemListener *listeners;
         QString nameGroup;
         QString displayLabel;
+        QByteArray contactData;
+        QScopedPointer<QContact> instantiatedContact;
+        QScopedPointer<ItemData> itemData;
     };
 
     class ListModel : public QAbstractListModel
@@ -225,7 +320,7 @@ public:
     ListModel *m_models[FilterTypesCount];
     bool m_populated[FilterTypesCount];
 
-    QList<CacheItem> m_cache;
+    QList<CacheItem *> m_cache;
     QHash<quint32, int> m_cacheIndices;
 
     static SeasideCache *instancePtr;
